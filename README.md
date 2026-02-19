@@ -6,11 +6,11 @@
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org/)
 [![Semantic Versioning](https://img.shields.io/badge/SemVer-2.0.0-blue)](https://semver.org/spec/v2.0.0.html)
 
-This GitHub Action extracts one release section for a given tag from `CHANGELOG.md`.
+This GitHub Action extracts the body of one release section for a given tag from `CHANGELOG.md`.
 
 ## What the project does
 
-For a provided tag (for example `v1.2.3`) it finds the matching changelog section and writes that section to a target file (or prints to stdout in standalone mode without `--release-notes`).
+For a provided tag (for example `v1.2.3`) it finds the matching changelog section and writes only the section body to a target file (or prints to stdout in standalone mode without `--release-notes`).
 
 ## Why the project is useful
 
@@ -108,6 +108,7 @@ Run the lightweight test suite (no external deps):
 ## Limitations
 
 - Expects release headings that start with `## ` and end with date in `YYYY-MM-DD`
+- Omits the matched `## ...` release heading from generated notes (to avoid duplicating GitHub release titles)
 - Fails if no matching section exists for the tag
 - Fails if multiple matching sections exist for the same tag
 - Requires exactly one release section per tag in the changelog

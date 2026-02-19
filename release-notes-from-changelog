@@ -191,10 +191,16 @@ END_LINE="$(
     BEGIN {
       found_end = 0
     }
-    NR > start_line && /^## / {
-      print NR - 1
-      found_end = 1
-      exit
+    NR > start_line {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+
+      if (line ~ /^## \[[^]]+\] - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ || line ~ /^## [^ ]+ - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
+        print NR - 1
+        found_end = 1
+        exit
+      }
     }
     END {
       if (found_end == 0 && NR >= start_line) {
@@ -205,8 +211,22 @@ END_LINE="$(
 )"
 
 [[ -n "${END_LINE}" ]] || die "failed to calculate release section end for tag '${TAG_NAME}'"
+BODY_START_LINE="$((START_LINE + 1))"
 
-if ! sed -n "${START_LINE},${END_LINE}p" "${CHANGELOG_PATH}" > "${TARGET_PATH}"; then
+if ! sed -n "${BODY_START_LINE},${END_LINE}p" "${CHANGELOG_PATH}" | awk '
+  BEGIN {
+    started = 0
+  }
+  {
+    line = $0
+    sub(/\r$/, "", line)
+    if (started == 0 && line ~ /^[[:space:]]*$/) {
+      next
+    }
+    started = 1
+    print line
+  }
+' > "${TARGET_PATH}"; then
   die "failed to write release notes to: ${TARGET_PATH}"
 fi
 
@@ -214,8 +234,8 @@ if [[ ! -s "${TARGET_PATH}" ]]; then
   die "extracted release notes are empty for tag '${TAG_NAME}'"
 fi
 
-if [[ "$(wc -l < "${TARGET_PATH}")" -lt 2 ]]; then
-  die "release section for tag '${TAG_NAME}' is empty or incomplete"
+if ! grep -q '[^[:space:]]' "${TARGET_PATH}"; then
+  die "release section body for tag '${TAG_NAME}' is empty"
 fi
 
 if ((SHOULD_PRINT_STDOUT == 1)); then

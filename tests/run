@@ -164,8 +164,9 @@ EOF
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "### Added"
   assert_file_contains "${out}" "- Add release notes extraction"
+  assert_file_not_contains "${out}" "## [1.2.3] - 2026-02-19"
   assert_file_not_contains "${out}" "## [1.2.2] - 2026-02-18"
 }
 
@@ -245,8 +246,9 @@ EOF
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_str_contains "${CAPTURED_OUTPUT}" "## [1.2.3] - 2026-02-19"
+  assert_str_contains "${CAPTURED_OUTPUT}" "### Added"
   assert_str_contains "${CAPTURED_OUTPUT}" "- Add release notes extraction"
+  assert_str_not_contains "${CAPTURED_OUTPUT}" "## [1.2.3] - 2026-02-19"
   assert_str_not_contains "${CAPTURED_OUTPUT}" "## [1.2.2] - 2026-02-18"
 }
 
@@ -270,8 +272,9 @@ EOF
 
   run_and_capture env TAG=v1.2.3 CHANGELOG="${changelog}" RELEASE_NOTES="${out}" "${EXTRACT_RELEASE_NOTES}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "### Added"
   assert_file_contains "${out}" "- Extract using env vars"
+  assert_file_not_contains "${out}" "## [1.2.3] - 2026-02-19"
 }
 
 test_extract_release_notes_cli_overrides_env() {
@@ -297,7 +300,8 @@ EOF
   run_and_capture env TAG=v9.9.9 CHANGELOG=/does/not/exist RELEASE_NOTES="${out_env}" "${EXTRACT_RELEASE_NOTES}" \
     --tag v1.2.3 --changelog "${changelog}" --release-notes "${out_cli}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out_cli}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out_cli}" "- CLI should win"
+  assert_file_not_contains "${out_cli}" "## [1.2.3] - 2026-02-19"
   [[ ! -e "${out_env}" ]] || fail "env output path should not be used when CLI overrides it"
 }
 
@@ -321,7 +325,8 @@ EOF
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3+build.1 --changelog "${changelog}" --release-notes "${out}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [1.2.3+build.1] - 2026-02-19"
+  assert_file_contains "${out}" "- Match tags with plus sign"
+  assert_file_not_contains "${out}" "## [1.2.3+build.1] - 2026-02-19"
 }
 
 test_extract_release_notes_no_regex_false_positive() {
@@ -357,7 +362,8 @@ test_extract_release_notes_crlf_headings() {
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "- CRLF heading"
+  assert_file_not_contains "${out}" "## [1.2.3] - 2026-02-19"
   assert_file_not_contains "${out}" "## [1.2.2] - 2026-02-18"
 }
 
@@ -381,7 +387,8 @@ EOF
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag 1.2.3 --changelog "${changelog}" --release-notes "${out}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [v1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "- Match v-prefixed heading"
+  assert_file_not_contains "${out}" "## [v1.2.3] - 2026-02-19"
 }
 
 test_extract_release_notes_heading_with_trailing_spaces() {
@@ -396,7 +403,45 @@ test_extract_release_notes_heading_with_trailing_spaces() {
 
   run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
   assert_equal "${CAPTURED_STATUS}" "0"
-  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "- Heading with trailing spaces"
+  assert_file_not_contains "${out}" "## [1.2.3] - 2026-02-19"
+}
+
+test_extract_release_notes_body_can_contain_non_release_h2() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Keep this entry
+
+## Migration notes
+
+Use this with care.
+
+## [1.2.2] - 2026-02-18
+
+### Fixed
+
+- Older release
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "- Keep this entry"
+  assert_file_contains "${out}" "## Migration notes"
+  assert_file_contains "${out}" "Use this with care."
+  assert_file_not_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_not_contains "${out}" "## [1.2.2] - 2026-02-18"
 }
 
 test_extract_release_notes_tmp_file_cleanup_on_error() {
@@ -504,6 +549,7 @@ main() {
   run_test "extract_release_notes_crlf_headings" test_extract_release_notes_crlf_headings
   run_test "extract_release_notes_tag_without_v_matches_v_heading" test_extract_release_notes_tag_without_v_matches_v_heading
   run_test "extract_release_notes_heading_with_trailing_spaces" test_extract_release_notes_heading_with_trailing_spaces
+  run_test "extract_release_notes_body_can_contain_non_release_h2" test_extract_release_notes_body_can_contain_non_release_h2
   run_test "extract_release_notes_tmp_file_cleanup_on_error" test_extract_release_notes_tmp_file_cleanup_on_error
   run_test "extract_release_notes_output_same_as_changelog_fails" test_extract_release_notes_output_same_as_changelog_fails
   run_test "extract_release_notes_output_directory_fails" test_extract_release_notes_output_directory_fails
