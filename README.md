@@ -1,6 +1,6 @@
 # Extract Release Notes from Changelog GitHub Action
 
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-blue?logo=github)](https://github.com/marketplace/actions/release-notes-from-changelog)
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-blue?logo=github)](https://github.com/marketplace/actions/extract-release-notes-from-changelog)
 [![GitHub Releases](https://img.shields.io/github/v/release/octivi/release-notes-from-changelog?sort=semver)](https://github.com/octivi/release-notes-from-changelog/releases)
 [![License: MIT](https://img.shields.io/github/license/octivi/release-notes-from-changelog)](https://choosealicense.com/licenses/mit/)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org/)
@@ -131,11 +131,13 @@ permissions:
 
 jobs:
   release:
+    name: Create GitHub Release
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v6
 
-      - id: release_notes
+      - name: Generate release notes
+        id: release_notes
         uses: octivi/release-notes-from-changelog@v1
         with:
           tag: ${{ github.ref_name }}

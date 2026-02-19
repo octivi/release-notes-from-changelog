@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   release:
+    name: Create GitHub Release
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v6
