@@ -1,0 +1,39 @@
+---
+# SPDX-FileCopyrightText: 2026  IMAGIN sp. z o.o.
+# SPDX-FileContributor: Marcin Engelmann <mengelmann@octivi.com>
+# SPDX-License-Identifier: MIT
+#
+# This file is part of the configuration created by Octivi's DevOps team.
+# Details at https://octivi.com/devops
+
+name: Extract Release Notes from Changelog
+description: Extract release notes for a given tag from CHANGELOG.md.
+branding:
+  icon: file-text
+  color: blue
+inputs:
+  tag:
+    description: "Release tag to extract, e.g. v1.2.3"
+    required: true
+  changelog:
+    description: "Path to changelog file"
+    required: false
+    default: "CHANGELOG.md"
+  release_notes:
+    description: "Output file path for extracted release notes"
+    required: false
+    default: "release-notes.md"
+outputs:
+  release_notes:
+    description: "Path to file with extracted release notes"
+    value: ${{ inputs.release_notes }}
+runs:
+  using: composite
+  steps:
+    - name: Extract release notes from changelog
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        CHANGELOG: ${{ inputs.changelog }}
+        RELEASE_NOTES: ${{ inputs.release_notes }}
+      run: ${{ github.action_path }}/release-notes-from-changelog

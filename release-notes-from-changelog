@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026  IMAGIN sp. z o.o.
+# SPDX-FileContributor: Marcin Engelmann <mengelmann@octivi.com>
+# SPDX-License-Identifier: MIT
+#
+# This file is part of the configuration created by Octivi's DevOps team.
+# Details at https://octivi.com/devops
+#
+# This script is part of a GitHub Action available on GitHub Marketplace:
+# https://github.com/marketplace/actions/release-notes-from-changelog
+#
+# Source code repository https://github.com/octivi/release-notes-from-changelog
+#
+# Extract release notes for a given tag from a Common-Changelog style CHANGELOG.md section.
+
+# >>> OBB:BEGIN variant=header
+# Octivi Bash Boilerplate (OBB) Header
+# Part of Octivi Bash Boilerplate https://github.com/octivi/bash-boilerplate
+################################################################################
+# Unofficial Bash "Strict Mode"
+# http://redsymbol.net/articles/unofficial-bash-strict-mode/
+set -euo pipefail
+# Define common constants regardless if they are used in the script
+__my_name="$(basename "${BASH_SOURCE[0]}")"
+readonly __my_name
+__my_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly __my_dir
+__my_path="${__my_dir}/${__my_name}"
+# shellcheck disable=SC2034
+readonly __my_path
+__my_args="$*"
+# shellcheck disable=SC2034
+readonly __my_args
+# Set IFS to just newline and tab
+IFS=$'\n\t'
+################################################################################
+# <<< OBB:END
+
+usage() {
+  cat <<USAGE
+Usage: ${__my_name} --tag <vX.Y.Z> --changelog <path> [--release-notes <path>] [--help|-h]
+
+Options:
+  --tag tag_name                         Release tag, e.g. v1.2.3 (or 1.2.3)
+  --changelog path                       Path to CHANGELOG.md file
+  --release-notes path                   Output path; when omitted, print to stdout
+  -h, --help                             Show this help message
+
+Environment:
+  TAG=<tag name>                         Release tag, e.g. v1.2.3 (or 1.2.3)
+  CHANGELOG=<path>                       Path to CHANGELOG.md file (default: CHANGELOG.md)
+  RELEASE_NOTES=<path>                   Output path; when omitted, print to stdout
+USAGE
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+canonical_path() {
+  local path="$1"
+  local parent=""
+  parent="$(dirname "${path}")"
+
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f -- "${path}" 2>/dev/null && return 0
+  fi
+
+  if [[ -d "${parent}" ]]; then
+    printf '%s/%s\n' "$(cd "${parent}" && pwd -P)" "$(basename "${path}")"
+    return 0
+  fi
+
+  return 1
+}
+
+# Defaults (env overrides with fallbacks)
+TAG_NAME="${TAG-}"
+CHANGELOG_PATH="${CHANGELOG:-CHANGELOG.md}"
+RELEASE_NOTES_PATH="${RELEASE_NOTES-}"
+TARGET_PATH=""
+SHOULD_PRINT_STDOUT=0
+
+cleanup_stdout_tmp() {
+  if ((SHOULD_PRINT_STDOUT == 1)) && [[ -n "${TARGET_PATH:-}" ]] && [[ -f "${TARGET_PATH}" ]]; then
+    rm -f "${TARGET_PATH}" || true
+  fi
+}
+
+trap cleanup_stdout_tmp EXIT
+
+while (($#)); do
+  case "$1" in
+    --tag)
+      shift
+      [[ $# -gt 0 ]] || die "missing value for --tag"
+      TAG_NAME="$1"
+      ;;
+    --changelog)
+      shift
+      [[ $# -gt 0 ]] || die "missing value for --changelog"
+      CHANGELOG_PATH="$1"
+      ;;
+    --release-notes)
+      shift
+      [[ $# -gt 0 ]] || die "missing value for --release-notes"
+      RELEASE_NOTES_PATH="$1"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+  shift
+done
+
+[[ -n "${TAG_NAME}" ]] || die "--tag is required"
+[[ -n "${CHANGELOG_PATH}" ]] || die "--changelog is required"
+[[ -f "${CHANGELOG_PATH}" ]] || die "changelog file not found: ${CHANGELOG_PATH}"
+[[ -r "${CHANGELOG_PATH}" ]] || die "changelog file is not readable: ${CHANGELOG_PATH}"
+
+if [[ -n "${RELEASE_NOTES_PATH}" ]]; then
+  release_notes_parent="$(dirname "${RELEASE_NOTES_PATH}")"
+  [[ -d "${release_notes_parent}" ]] || die "release notes output directory does not exist: ${release_notes_parent}"
+  [[ ! -d "${RELEASE_NOTES_PATH}" ]] || die "release notes output path is a directory: ${RELEASE_NOTES_PATH}"
+
+  if [[ -e "${RELEASE_NOTES_PATH}" && ! -w "${RELEASE_NOTES_PATH}" ]]; then
+    die "release notes output file is not writable: ${RELEASE_NOTES_PATH}"
+  fi
+
+  if [[ ! -e "${RELEASE_NOTES_PATH}" && ! -w "${release_notes_parent}" ]]; then
+    die "release notes output directory is not writable: ${release_notes_parent}"
+  fi
+
+  changelog_canonical="$(canonical_path "${CHANGELOG_PATH}" || true)"
+  release_notes_canonical="$(canonical_path "${RELEASE_NOTES_PATH}" || true)"
+  if [[ -n "${changelog_canonical}" && -n "${release_notes_canonical}" && "${changelog_canonical}" == "${release_notes_canonical}" ]]; then
+    die "release notes output path must be different from changelog path: ${RELEASE_NOTES_PATH}"
+  fi
+
+  TARGET_PATH="${RELEASE_NOTES_PATH}"
+else
+  TARGET_PATH="$(mktemp)"
+  SHOULD_PRINT_STDOUT=1
+fi
+
+TAG_NO_V="${TAG_NAME#v}"
+mapfile -t MATCH_LINES < <(
+  awk -v tag_no_v="${TAG_NO_V}" '
+    /^## / {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      heading_tag = ""
+
+      if (line ~ /^## \[[^]]+\] - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
+        heading_tag = line
+        sub(/^## \[/, "", heading_tag)
+        sub(/\] - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/, "", heading_tag)
+      } else if (line ~ /^## [^ ]+ - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
+        heading_tag = line
+        sub(/^## /, "", heading_tag)
+        sub(/ - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/, "", heading_tag)
+      }
+
+      heading_tag_no_v = heading_tag
+      sub(/^v/, "", heading_tag_no_v)
+
+      if (heading_tag_no_v == tag_no_v) {
+        print NR
+      }
+    }
+  ' "${CHANGELOG_PATH}"
+)
+
+if ((${#MATCH_LINES[@]} == 0)); then
+  die "no release section found for tag '${TAG_NAME}' in ${CHANGELOG_PATH}"
+fi
+
+if ((${#MATCH_LINES[@]} > 1)); then
+  die "multiple release sections found for tag '${TAG_NAME}' in ${CHANGELOG_PATH}"
+fi
+
+START_LINE="${MATCH_LINES[0]}"
+END_LINE="$(
+  awk -v start_line="${START_LINE}" '
+    BEGIN {
+      found_end = 0
+    }
+    NR > start_line && /^## / {
+      print NR - 1
+      found_end = 1
+      exit
+    }
+    END {
+      if (found_end == 0 && NR >= start_line) {
+        print NR
+      }
+    }
+  ' "${CHANGELOG_PATH}"
+)"
+
+[[ -n "${END_LINE}" ]] || die "failed to calculate release section end for tag '${TAG_NAME}'"
+
+if ! sed -n "${START_LINE},${END_LINE}p" "${CHANGELOG_PATH}" > "${TARGET_PATH}"; then
+  die "failed to write release notes to: ${TARGET_PATH}"
+fi
+
+if [[ ! -s "${TARGET_PATH}" ]]; then
+  die "extracted release notes are empty for tag '${TAG_NAME}'"
+fi
+
+if [[ "$(wc -l < "${TARGET_PATH}")" -lt 2 ]]; then
+  die "release section for tag '${TAG_NAME}' is empty or incomplete"
+fi
+
+if ((SHOULD_PRINT_STDOUT == 1)); then
+  cat "${TARGET_PATH}"
+fi

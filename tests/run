@@ -1,0 +1,515 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026  IMAGIN sp. z o.o.
+# SPDX-FileContributor: Marcin Engelmann <mengelmann@octivi.com>
+# SPDX-License-Identifier: MIT
+#
+# This file is part of the configuration created by Octivi's DevOps team.
+# Details at https://octivi.com/devops
+#
+# This script is part of a GitHub Action available on GitHub Marketplace:
+# https://github.com/marketplace/actions/release-notes-from-changelog
+#
+# Source code repository https://github.com/octivi/release-notes-from-changelog
+
+# >>> OBB:BEGIN variant=header
+# Octivi Bash Boilerplate (OBB) Header
+# Part of Octivi Bash Boilerplate https://github.com/octivi/bash-boilerplate
+################################################################################
+# Unofficial Bash "Strict Mode"
+# http://redsymbol.net/articles/unofficial-bash-strict-mode/
+set -euo pipefail
+# Define common constants regardless if they are used in the script
+__my_name="$(basename "${BASH_SOURCE[0]}")"
+readonly __my_name
+__my_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly __my_dir
+__my_path="${__my_dir}/${__my_name}"
+# shellcheck disable=SC2034
+readonly __my_path
+__my_args="$*"
+# shellcheck disable=SC2034
+readonly __my_args
+# Set IFS to just newline and tab
+IFS=$'\n\t'
+################################################################################
+# <<< OBB:END
+
+EXTRACT_RELEASE_NOTES="$(cd "${__my_dir}/.." && pwd)/release-notes-from-changelog"
+readonly EXTRACT_RELEASE_NOTES
+
+TMP_DIRS=()
+CAPTURED_OUTPUT=""
+CAPTURED_STATUS=0
+
+cleanup() {
+  local dir=""
+  for dir in "${TMP_DIRS[@]}"; do
+    [[ -n "${dir}" ]] && rm -rf "${dir}"
+  done
+}
+
+trap cleanup EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+assert_equal() {
+  local actual="$1"
+  local expected="$2"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Expected: ${expected}" >&2
+    echo "Actual:   ${actual}" >&2
+    fail "assert_equal"
+  fi
+}
+
+assert_str_contains() {
+  local haystack="$1"
+  local expected="$2"
+  if [[ "${haystack}" != *"${expected}"* ]]; then
+    echo "Expected to find: ${expected}" >&2
+    echo "In output:" >&2
+    echo "${haystack}" >&2
+    fail "assert_str_contains"
+  fi
+}
+
+assert_str_not_contains() {
+  local haystack="$1"
+  local unexpected="$2"
+  if [[ "${haystack}" == *"${unexpected}"* ]]; then
+    echo "Expected NOT to find: ${unexpected}" >&2
+    echo "In output:" >&2
+    echo "${haystack}" >&2
+    fail "assert_str_not_contains"
+  fi
+}
+
+assert_file_contains() {
+  local file="$1"
+  local expected="$2"
+  if ! grep -Fq -- "${expected}" "${file}"; then
+    echo "Expected to find: ${expected}" >&2
+    echo "In file: ${file}" >&2
+    echo "---" >&2
+    sed -n '1,220p' "${file}" >&2 || true
+    echo "---" >&2
+    fail "assert_file_contains"
+  fi
+}
+
+assert_file_not_contains() {
+  local file="$1"
+  local unexpected="$2"
+  if grep -Fq -- "${unexpected}" "${file}"; then
+    echo "Expected NOT to find: ${unexpected}" >&2
+    echo "In file: ${file}" >&2
+    echo "---" >&2
+    sed -n '1,220p' "${file}" >&2 || true
+    echo "---" >&2
+    fail "assert_file_not_contains"
+  fi
+}
+
+run_and_capture() {
+  local out=""
+  local status=0
+  set +e
+  out="$("$@" 2>&1)"
+  status=$?
+  set -e
+  CAPTURED_OUTPUT="${out}"
+  CAPTURED_STATUS=${status}
+}
+
+make_tmp_dir() {
+  local dir=""
+  dir="$(mktemp -d)"
+  TMP_DIRS+=("${dir}")
+  printf "%s\n" "${dir}"
+}
+
+run_test() {
+  local name="$1"
+  shift
+  echo "==> ${name}"
+  "$@"
+}
+
+test_extract_release_notes_success() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Add release notes extraction
+
+## [1.2.2] - 2026-02-18
+
+### Fixed
+
+- Fix old behavior
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "- Add release notes extraction"
+  assert_file_not_contains "${out}" "## [1.2.2] - 2026-02-18"
+}
+
+test_extract_release_notes_missing_section_fails() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.2] - 2026-02-18
+
+### Fixed
+
+- Fix old behavior
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "no release section found for tag 'v1.2.3'"
+}
+
+test_extract_release_notes_duplicate_section_fails() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Add first section
+
+## [v1.2.3] - 2026-02-19
+
+### Changed
+
+- Duplicate section for same tag
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "multiple release sections found for tag 'v1.2.3'"
+}
+
+test_extract_release_notes_stdout_success() {
+  local tmp=""
+  local changelog=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Add release notes extraction
+
+## [1.2.2] - 2026-02-18
+
+### Fixed
+
+- Fix old behavior
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_str_contains "${CAPTURED_OUTPUT}" "## [1.2.3] - 2026-02-19"
+  assert_str_contains "${CAPTURED_OUTPUT}" "- Add release notes extraction"
+  assert_str_not_contains "${CAPTURED_OUTPUT}" "## [1.2.2] - 2026-02-18"
+}
+
+test_extract_release_notes_env_variables_success() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Extract using env vars
+EOF
+
+  run_and_capture env TAG=v1.2.3 CHANGELOG="${changelog}" RELEASE_NOTES="${out}" "${EXTRACT_RELEASE_NOTES}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${out}" "- Extract using env vars"
+}
+
+test_extract_release_notes_cli_overrides_env() {
+  local tmp=""
+  local changelog=""
+  local out_env=""
+  local out_cli=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out_env="${tmp}/from-env.md"
+  out_cli="${tmp}/from-cli.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- CLI should win
+EOF
+
+  run_and_capture env TAG=v9.9.9 CHANGELOG=/does/not/exist RELEASE_NOTES="${out_env}" "${EXTRACT_RELEASE_NOTES}" \
+    --tag v1.2.3 --changelog "${changelog}" --release-notes "${out_cli}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out_cli}" "## [1.2.3] - 2026-02-19"
+  [[ ! -e "${out_env}" ]] || fail "env output path should not be used when CLI overrides it"
+}
+
+test_extract_release_notes_tag_with_regex_chars() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3+build.1] - 2026-02-19
+
+### Added
+
+- Match tags with plus sign
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3+build.1 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [1.2.3+build.1] - 2026-02-19"
+}
+
+test_extract_release_notes_no_regex_false_positive() {
+  local tmp=""
+  local changelog=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1x2x3] - 2026-02-19
+
+### Added
+
+- Wrong section
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "no release section found for tag 'v1.2.3'"
+}
+
+test_extract_release_notes_crlf_headings() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  printf '# Changelog\r\n\r\n## [1.2.3] - 2026-02-19\r\n\r\n### Added\r\n\r\n- CRLF heading\r\n\r\n## [1.2.2] - 2026-02-18\r\n' > "${changelog}"
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+  assert_file_not_contains "${out}" "## [1.2.2] - 2026-02-18"
+}
+
+test_extract_release_notes_tag_without_v_matches_v_heading() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [v1.2.3] - 2026-02-19
+
+### Added
+
+- Match v-prefixed heading
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag 1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [v1.2.3] - 2026-02-19"
+}
+
+test_extract_release_notes_heading_with_trailing_spaces() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/release-notes.md"
+
+  printf '# Changelog\n\n## [1.2.3] - 2026-02-19   \n\n### Added\n\n- Heading with trailing spaces\n' > "${changelog}"
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "0"
+  assert_file_contains "${out}" "## [1.2.3] - 2026-02-19"
+}
+
+test_extract_release_notes_tmp_file_cleanup_on_error() {
+  local tmp=""
+  local changelog=""
+  local tmpdir=""
+  local leftover_count=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  tmpdir="${tmp}/tmpdir"
+  mkdir -p "${tmpdir}"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.2] - 2026-02-18
+EOF
+
+  run_and_capture env TMPDIR="${tmpdir}" "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "no release section found for tag 'v1.2.3'"
+
+  leftover_count="$(find "${tmpdir}" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')"
+  assert_equal "${leftover_count}" "0"
+}
+
+test_extract_release_notes_output_same_as_changelog_fails() {
+  local tmp=""
+  local changelog=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+
+### Added
+
+- Keep me
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${changelog}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "release notes output path must be different from changelog path"
+  assert_file_contains "${changelog}" "## [1.2.3] - 2026-02-19"
+  assert_file_contains "${changelog}" "- Keep me"
+}
+
+test_extract_release_notes_output_directory_fails() {
+  local tmp=""
+  local changelog=""
+  local out_dir=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out_dir="${tmp}/out"
+  mkdir -p "${out_dir}"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out_dir}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "release notes output path is a directory"
+}
+
+test_extract_release_notes_output_parent_missing_fails() {
+  local tmp=""
+  local changelog=""
+  local out=""
+  tmp="$(make_tmp_dir)"
+  changelog="${tmp}/CHANGELOG.md"
+  out="${tmp}/missing/release-notes.md"
+
+  cat <<'EOF' > "${changelog}"
+# Changelog
+
+## [1.2.3] - 2026-02-19
+EOF
+
+  run_and_capture "${EXTRACT_RELEASE_NOTES}" --tag v1.2.3 --changelog "${changelog}" --release-notes "${out}"
+  assert_equal "${CAPTURED_STATUS}" "1"
+  assert_str_contains "${CAPTURED_OUTPUT}" "release notes output directory does not exist"
+}
+
+main() {
+  command -v grep >/dev/null 2>&1 || fail "Cannot find grep"
+  command -v mktemp >/dev/null 2>&1 || fail "Cannot find mktemp"
+  command -v awk >/dev/null 2>&1 || fail "Cannot find awk"
+  command -v sed >/dev/null 2>&1 || fail "Cannot find sed"
+  command -v wc >/dev/null 2>&1 || fail "Cannot find wc"
+  [[ -x "${EXTRACT_RELEASE_NOTES}" ]] || fail "Cannot execute ${EXTRACT_RELEASE_NOTES}"
+
+  run_test "extract_release_notes_success" test_extract_release_notes_success
+  run_test "extract_release_notes_missing_section_fails" test_extract_release_notes_missing_section_fails
+  run_test "extract_release_notes_duplicate_section_fails" test_extract_release_notes_duplicate_section_fails
+  run_test "extract_release_notes_stdout_success" test_extract_release_notes_stdout_success
+  run_test "extract_release_notes_env_variables_success" test_extract_release_notes_env_variables_success
+  run_test "extract_release_notes_cli_overrides_env" test_extract_release_notes_cli_overrides_env
+  run_test "extract_release_notes_tag_with_regex_chars" test_extract_release_notes_tag_with_regex_chars
+  run_test "extract_release_notes_no_regex_false_positive" test_extract_release_notes_no_regex_false_positive
+  run_test "extract_release_notes_crlf_headings" test_extract_release_notes_crlf_headings
+  run_test "extract_release_notes_tag_without_v_matches_v_heading" test_extract_release_notes_tag_without_v_matches_v_heading
+  run_test "extract_release_notes_heading_with_trailing_spaces" test_extract_release_notes_heading_with_trailing_spaces
+  run_test "extract_release_notes_tmp_file_cleanup_on_error" test_extract_release_notes_tmp_file_cleanup_on_error
+  run_test "extract_release_notes_output_same_as_changelog_fails" test_extract_release_notes_output_same_as_changelog_fails
+  run_test "extract_release_notes_output_directory_fails" test_extract_release_notes_output_directory_fails
+  run_test "extract_release_notes_output_parent_missing_fails" test_extract_release_notes_output_parent_missing_fails
+
+  echo "All tests passed"
+}
+
+main "$@"

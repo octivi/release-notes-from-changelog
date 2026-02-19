@@ -1,0 +1,46 @@
+---
+# SPDX-FileCopyrightText: 2026  IMAGIN sp. z o.o.
+# SPDX-FileContributor: Marcin Engelmann <mengelmann@octivi.com>
+# SPDX-License-Identifier: MIT
+#
+# This file is part of the configuration created by Octivi's DevOps team.
+# Details at https://octivi.com/devops
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate release notes
+        id: release_notes
+        uses: octivi/release-notes-from-changelog@v1
+        with:
+          tag: ${{ github.ref_name }}
+          changelog: CHANGELOG.md
+          release_notes: release-notes.md
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum "${{ github.event.repository.name }}" > "${{ github.event.repository.name }}.sha256"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.release_notes }}
+          generate_release_notes: false
+          files: |
+            ${{ github.event.repository.name }}
+            ${{ github.event.repository.name }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
